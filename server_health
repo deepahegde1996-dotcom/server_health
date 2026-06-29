@@ -1,0 +1,169 @@
+#!/bin/env bash
+###################################
+#Author: Deepti Hegde
+#Date-27/6/2026
+#Summary:
+#Runs CPU/memory checks, cleans old logs, and backs up configuration files
+###################################
+
+THRESHOLD_CPU=80
+THRESHOLD_MEMORY=80
+LOG_DIR="/var/log/server_automation"
+days=1
+LOG_FILE="$LOG_DIR/maintainance_$(date +%F).log"
+BACKUP_DIR="/tmp/server_backups"
+SOURCE_DIR="/etc"
+STAT_FILE="$LOG_DIR/alert.txt"
+
+EMAIL_SUBJECT="SERVER ALERT :$(hostname)"
+EMAIL_TO="yourmail@gmail.com"
+
+#create directories 
+mkdir -p "$LOG_DIR" "$BACKUP_DIR"
+
+##INIT STAT FILE#####
+if [[ ! -f $STAT_FILE ]] 
+then
+    echo "MEM=OK" > "$STAT_FILE"
+    echo "CPU=OK" >> "$STAT_FILE"
+fi
+
+send_email_alert()
+{
+ local subject=$1
+ local body=$2
+ if command -v msmtp > /dev/null 2>&1
+ then
+	 log_message "INFO" "email sent to $EMAIL_TO"
+         echo -e "Subject:$subject \n$body" | /usr/bin/msmtp -C /home/deepa/.msmtprc  "$EMAIL_TO" 
+
+ else
+	 log_message "WARN" "msmtp command not found. Email alert skipped."
+ fi
+}
+check_cpu()
+{
+   local cpu_usage
+   cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk -F',' '{print 100 - $4}')
+   cpu_usage=${cpu_usage%.*}
+   log_message "INFO" "CPU usage is:$cpu_usage%"
+   local state
+   state=$(get_state "CPU")
+   if (( cpu_usage < THRESHOLD_CPU ))
+   then
+       if [[ "$state" == "OK" ]]
+       then
+           log_message "WARN" "CPU usage above threshold!!"
+	   set_state "CPU" "ALERT"
+	   send_email_alert "$EMAIL_SUBJECT-High CPU" "cpu usage is at $cpu_usage% on $(hostname)"
+       fi    
+   else
+       if [[ "$state" == "ALERT" ]]
+       then
+	   log_message "INFO" "CPU Usage back to normal"
+	   send_email_alert "$EMAIL_SUBJECT- CPU back to normal" "cpu usage is at $cpu_usage% on $(hostname)"
+	   set_state "CPU" "OK"
+       fi
+   fi
+}
+check_memory()
+{
+   local mem_usage
+   mem_usage=$(free -m | awk '/Mem/{printf("%.0f\n", $3/$2 * 100)}')
+   log_message "INFO" "MEMORY usage is:$mem_usage%"
+   local state
+   state=$(get_state "MEM")
+   if (( mem_usage > THRESHOLD_MEMORY ))
+   then
+       if [[ "$state" == "OK" ]]
+       then
+           log_message "WARN" "Memory usage above threshold!!"
+           set_state "MEM" "ALERT"
+           send_email_alert "$EMAIL_SUBJECT-High MEMORY" ",mem usage is at $mem_usage% on $(hostname)"
+       fi
+   else
+       if [[ "$state" == "ALERT" ]]
+       then
+           log_message "INFO" "Memory Usage back to normal"
+           send_email_alert "$EMAIL_SUBJECT- Memory back to normal" "memory usage is at $mem_usage% on $(hostname)"
+           set_state "MEM" "OK"
+       fi
+   fi
+}
+
+set_state()
+{
+    sed -i "s/^$1=.*/$1=$2/" "$STAT_FILE"
+}
+get_state()
+{
+    grep "$1" "$STAT_FILE"  | cut -d "=" -f 2
+}
+log_message()
+{
+    local level="$1"
+    local message="$2"
+    echo "$(date '+%F %T') [$level] $message" | sudo tee -a "${LOG_FILE}"
+}
+handle_error()
+{
+   local message=$1
+   log_message "ERROR" "$1"
+   exit 1
+}
+
+cleanup_logs()
+{
+    if $(find "$LOG_DIR" -type f -mtime -$days | grep -q . )
+    then
+        find "$LOG_DIR" -type f -mtime -$days -exec rm {} +
+        log_message "INFO" "files modified within last $days days exist"
+    elif $(find "$LOG_DIR" -type f -mtime +$days | sudo grep -q . )
+    then
+    	 find "$LOG_DIR" -type f -mtime +$days -exec rm {} +
+        log_message "INFO" "files modified older than $days days ago exist"
+    elif $(find "$LOG_DIR" -type f -mtime $days | sudo grep -q . )
+    then
+	find "$LOG_DIR" -type f -mtime $days -exec rm {} +
+        log_message "INFO" "files  modified exactly  $days days ago exist"
+    else
+        echo "No files found"
+    fi
+}
+backup_files()
+{
+    local backup_file="$BACKUP_DIR/config_file_$(date +%F_%H-%M-%S).tar.gz"
+    tar -czf "$backup_file" "$SOURCE_DIR" 2> /dev/null
+    if [[ $? -eq 0 ]]
+    then
+        echo "backup created successfully:$backup_file"
+    else
+        handle_error "back creation was failed"
+    fi
+
+}
+
+show_menu()
+{
+  echo "***********MENU*********"
+  echo "1.check memory usage"
+  echo "2.check cpu usage"
+  echo "3.Back config files"
+  echo "4.cleanup older logs"
+  echo "5.Exit"
+}
+
+echo "***************Script starts here************"
+while true
+do
+    show_menu
+    read -p "Enter the choice between [1-5]" choice
+    case "$choice" in
+        1) check_memory ;;
+        2) check_cpu ;;
+	3) backup_files;;
+        4) cleanup_logs;;
+        5) log_message "INFO" "Exiting the script.";exit 0;;
+	*) echo "Invalid choice";;
+    esac
+done
