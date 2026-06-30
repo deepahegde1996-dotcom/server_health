@@ -1,3 +1,10 @@
+##########################################################
+#Author:Deepti 
+#Date-30/6/2026
+#Summary: Log rotation script that deletes log files that are modified within 4 days
+#########################################################
+
+
 #!/bin/env bash
 LOG_DIR="/var/log/logrotate"
 mkdir -p "$LOG_DIR"
