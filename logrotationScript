@@ -1,0 +1,15 @@
+#!/bin/env bash
+LOG_DIR="/var/log/logrotate"
+mkdir -p "$LOG_DIR"
+NUMBER_OF_DAYS=4
+TIMESTAMP=$(date +%F_%H_%M_%S)
+for logs in $LOG_DIR/*.log
+do
+	if [[ -f $logs ]]
+	then
+	    mv $logs $logs.$TIMESTAMP
+	    touch $logs
+	    gzip "$logs.$TIMESTAMP" 
+	fi
+done
+find $LOG_DIR  -name "*.gz" -mtime -$NUMBER_OF_DAYS -exec rm {} +
